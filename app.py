@@ -52,7 +52,11 @@ def make_app(provider: device.LocationProvider):
     else:
         print(f"[device] using provider: {type(provider).__name__}")
 
-    sim = GpsSimulator(provider, on_update=lambda s: sio.emit("state", s))
+    sim = GpsSimulator(
+        provider,
+        on_update=lambda s: sio.emit("state", s),
+        on_complete=lambda: sio.emit("completed", sim.snapshot()),
+    )
     sim.start()
 
     @app.route("/")
@@ -86,6 +90,15 @@ def make_app(provider: device.LocationProvider):
     @sio.on("clear_target")
     def _on_clear():
         sim.clear_target()
+
+    @sio.on("set_route")
+    def _on_route(data):
+        pts = data.get("points") or []
+        sim.set_route(pts)
+
+    @sio.on("clear_route")
+    def _on_clear_route():
+        sim.clear_route()
 
     @sio.on("joystick")
     def _on_joy(data):

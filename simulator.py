@@ -5,7 +5,7 @@ import math
 import random
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 EARTH_R = 6_371_000.0  # meters
 
@@ -45,7 +45,9 @@ class SimState:
     # joystick vector in [-1, 1], y=+1 is north
     joy_x: float = 0.0
     joy_y: float = 0.0
-    mode: str = "idle"  # idle | walk_to | joystick
+    mode: str = "idle"  # idle | walk_to | walk_route | joystick
+    route: list = field(default_factory=list)  # list of (lat, lon)
+    route_index: int = 0
 
 
 class GpsSimulator:
@@ -53,13 +55,15 @@ class GpsSimulator:
 
     TICK_HZ = 5  # 5 Hz update
 
-    def __init__(self, provider, on_update=None):
+    def __init__(self, provider, on_update=None, on_complete=None):
         self.provider = provider
         self.on_update = on_update or (lambda s: None)
+        self.on_complete = on_complete or (lambda: None)
         self.state = SimState()
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._pending_complete = False
 
     # --- public control --------------------------------------------------
     def start(self):
@@ -79,12 +83,14 @@ class GpsSimulator:
 
     def set_speed(self, kmh: float):
         with self._lock:
-            self.state.speed_kmh = max(0.1, min(150.0, kmh))
+            self.state.speed_kmh = max(0.1, min(9999.0, kmh))
 
     def set_target(self, lat: float, lon: float):
         with self._lock:
             self.state.target_lat = lat
             self.state.target_lon = lon
+            self.state.route = []
+            self.state.route_index = 0
             self.state.mode = "walk_to"
             self.state.running = True
 
@@ -93,6 +99,31 @@ class GpsSimulator:
             self.state.target_lat = None
             self.state.target_lon = None
             if self.state.mode == "walk_to":
+                self.state.mode = "idle"
+                self.state.running = False
+
+    def set_route(self, points):
+        with self._lock:
+            pts = [(float(p[0]), float(p[1])) for p in points if p]
+            if not pts:
+                self.state.route = []
+                self.state.route_index = 0
+                if self.state.mode == "walk_route":
+                    self.state.mode = "idle"
+                    self.state.running = False
+                return
+            self.state.route = pts
+            self.state.route_index = 0
+            self.state.target_lat = None
+            self.state.target_lon = None
+            self.state.mode = "walk_route"
+            self.state.running = True
+
+    def clear_route(self):
+        with self._lock:
+            self.state.route = []
+            self.state.route_index = 0
+            if self.state.mode == "walk_route":
                 self.state.mode = "idle"
                 self.state.running = False
 
@@ -114,18 +145,41 @@ class GpsSimulator:
             self.state.mode = "idle"
             self.state.target_lat = None
             self.state.target_lon = None
+            self.state.route = []
+            self.state.route_index = 0
             self.state.joy_x = 0.0
             self.state.joy_y = 0.0
+
+    def _remaining_m_locked(self) -> float:
+        s = self.state
+        if s.mode == "walk_to" and s.target_lat is not None:
+            return haversine_m(s.lat, s.lon, s.target_lat, s.target_lon)
+        if s.mode == "walk_route" and s.route and s.route_index < len(s.route):
+            tlat, tlon = s.route[s.route_index]
+            total = haversine_m(s.lat, s.lon, tlat, tlon)
+            for i in range(s.route_index, len(s.route) - 1):
+                a = s.route[i]
+                b = s.route[i + 1]
+                total += haversine_m(a[0], a[1], b[0], b[1])
+            return total
+        return 0.0
 
     def snapshot(self) -> dict:
         with self._lock:
             s = self.state
+            remaining = self._remaining_m_locked()
+            speed_mps = max(0.01, s.speed_kmh / 3.6)
+            eta_s = remaining / speed_mps if remaining > 0 and s.running else 0.0
             return {
                 "lat": s.lat, "lon": s.lon,
                 "speed_kmh": s.speed_kmh,
                 "running": s.running, "mode": s.mode,
                 "target": ([s.target_lat, s.target_lon]
                            if s.target_lat is not None else None),
+                "route": [list(p) for p in s.route],
+                "route_index": s.route_index,
+                "remaining_m": remaining,
+                "eta_s": eta_s,
             }
 
     # --- core loop -------------------------------------------------------
@@ -141,6 +195,12 @@ class GpsSimulator:
             except Exception as e:
                 print(f"[provider] push failed: {e}")
             self.on_update(self.snapshot())
+            if self._pending_complete:
+                self._pending_complete = False
+                try:
+                    self.on_complete()
+                except Exception as e:
+                    print(f"[on_complete] {e}")
             # pace
             elapsed = time.time() - t0
             time.sleep(max(0.0, dt - elapsed))
@@ -161,9 +221,34 @@ class GpsSimulator:
                     s.target_lat = s.target_lon = None
                     s.running = False
                     s.mode = "idle"
+                    self._pending_complete = True
                     return
                 br = bearing_to(s.lat, s.lon, s.target_lat, s.target_lon)
                 # heading jitter: +/- 6 deg
+                br += math.radians(random.uniform(-6, 6))
+                dn = math.cos(br) * step_m
+                de = math.sin(br) * step_m
+            elif s.mode == "walk_route" and s.route:
+                if s.route_index >= len(s.route):
+                    s.route = []
+                    s.route_index = 0
+                    s.running = False
+                    s.mode = "idle"
+                    self._pending_complete = True
+                    return
+                tlat, tlon = s.route[s.route_index]
+                dist = haversine_m(s.lat, s.lon, tlat, tlon)
+                if dist <= max(step_m, 1.5):
+                    s.lat, s.lon = tlat, tlon
+                    s.route_index += 1
+                    if s.route_index >= len(s.route):
+                        s.route = []
+                        s.route_index = 0
+                        s.running = False
+                        s.mode = "idle"
+                        self._pending_complete = True
+                    return
+                br = bearing_to(s.lat, s.lon, tlat, tlon)
                 br += math.radians(random.uniform(-6, 6))
                 dn = math.cos(br) * step_m
                 de = math.sin(br) * step_m
