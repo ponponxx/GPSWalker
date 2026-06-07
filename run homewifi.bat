@@ -7,8 +7,7 @@ REM   GPSWalker  -  edit ONLY the line below
 REM   Open the GPSWalker app on your phone, read "Phone address",
 REM   and put that <ip>:<port> here.
 REM ============================================================
-'set PHONE=192.168.68.103:8080'
-set PHONE=10.212.144.91:8080
+set PHONE=192.168.68.103:8080
 REM ============================================================
 
 cd /d "%~dp0"

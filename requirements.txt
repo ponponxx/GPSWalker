@@ -1,4 +1,4 @@
-Flask>=3.0
+ㄐFlask>=3.0
 Flask-SocketIO>=5.3
 simple-websocket>=1.0
 # iPhone (iOS 17+/26) location injection. Optional - only needed for --ios.
