@@ -29,6 +29,7 @@ class MockService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            WalkEngine.stopMotion()
             teardown()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
