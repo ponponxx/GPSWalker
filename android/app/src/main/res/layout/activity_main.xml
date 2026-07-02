@@ -1,199 +1,102 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:fillViewport="true">
+    android:layout_height="match_parent">
 
-    <LinearLayout
+    <org.osmdroid.views.MapView
+        android:id="@+id/map"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <TextView
+        android:id="@+id/status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_margin="12dp"
+        android:background="#DFFFFFFF"
+        android:fontFamily="monospace"
+        android:maxWidth="260dp"
+        android:padding="8dp"
+        android:textSize="12sp" />
+
+    <Button
+        android:id="@+id/btn_settings"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="12dp"
+        android:background="@drawable/bg_settings_circle"
+        android:elevation="8dp"
+        android:text="⚙"
+        android:textColor="#222222"
+        android:textSize="24sp" />
+
+    <TextView
+        android:id="@+id/selected_point"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="16dp">
+        android:layout_gravity="bottom"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="76dp"
+        android:background="#EFFFFFFF"
+        android:fontFamily="monospace"
+        android:padding="8dp"
+        android:text="點擊地圖選擇位置"
+        android:textSize="12sp" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingBottom="8dp"
-            android:text="GPSWalker"
-            android:textSize="24sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/status"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="#F0F2F5"
-            android:fontFamily="monospace"
-            android:padding="10dp"
-            android:textSize="13sp" />
-
-        <com.gpswalker.companion.TouchMapView
-            android:id="@+id/touch_map"
-            android:layout_width="match_parent"
-            android:layout_height="260dp"
-            android:layout_marginTop="10dp" />
+    <LinearLayout
+        android:id="@+id/bottom_bar"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_gravity="bottom"
+        android:background="#F5FFFFFF"
+        android:elevation="10dp"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:padding="6dp">
 
         <Button
-            android:id="@+id/btn_perm"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="Grant location permissions" />
+            android:id="@+id/btn_move_selected"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="移動"
+            android:textSize="12sp" />
 
         <Button
-            android:id="@+id/btn_dev"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Open Developer Options" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/btn_start"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Start service" />
-
-            <Button
-                android:id="@+id/btn_stop"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:backgroundTint="#C0392B"
-                android:text="Stop service" />
-        </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="14dp"
-            android:text="Speed"
-            android:textStyle="bold" />
-
-        <EditText
-            android:id="@+id/input_speed"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="km/h"
-            android:inputType="numberDecimal"
-            android:text="4.5" />
+            android:id="@+id/btn_fly_selected"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="飛到"
+            android:textSize="12sp" />
 
         <Button
-            android:id="@+id/btn_apply_speed"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Apply speed" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="14dp"
-            android:text="Current position / teleport"
-            android:textStyle="bold" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <EditText
-                android:id="@+id/input_lat"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:hint="lat"
-                android:inputType="numberDecimal|numberSigned"
-                android:text="25.033000" />
-
-            <EditText
-                android:id="@+id/input_lon"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:hint="lon"
-                android:inputType="numberDecimal|numberSigned"
-                android:text="121.565400" />
-        </LinearLayout>
+            android:id="@+id/btn_add_waypoint"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="加點"
+            android:textSize="12sp" />
 
         <Button
-            android:id="@+id/btn_teleport"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Teleport to coordinates" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="14dp"
-            android:text="Walk to target"
-            android:textStyle="bold" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <EditText
-                android:id="@+id/input_target_lat"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:hint="target lat"
-                android:inputType="numberDecimal|numberSigned" />
-
-            <EditText
-                android:id="@+id/input_target_lon"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:hint="target lon"
-                android:inputType="numberDecimal|numberSigned" />
-        </LinearLayout>
+            android:id="@+id/btn_start_route"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="路徑"
+            android:textSize="12sp" />
 
         <Button
-            android:id="@+id/btn_walk_target"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Start walking to target" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="14dp"
-            android:text="Multi-point route"
-            android:textStyle="bold" />
-
-        <EditText
-            android:id="@+id/input_route"
-            android:layout_width="match_parent"
-            android:layout_height="120dp"
-            android:gravity="top"
-            android:hint="One point per line: 25.033,121.5654"
-            android:inputType="textMultiLine"
-            android:singleLine="false" />
-
-        <Button
-            android:id="@+id/btn_walk_route"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Start route" />
-
-        <Button
-            android:id="@+id/btn_stop_motion"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:id="@+id/btn_stop_clear"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
             android:backgroundTint="#C0392B"
-            android:text="STOP motion" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="12dp"
-            android:text="Setup: Android Developer Options > Select mock location app > GPSWalker. Then tap Start service."
+            android:text="停止"
+            android:textColor="#FFFFFF"
             android:textSize="12sp" />
     </LinearLayout>
-</ScrollView>
+</FrameLayout>

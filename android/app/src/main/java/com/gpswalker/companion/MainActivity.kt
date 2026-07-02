@@ -19,19 +19,29 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import org.osmdroid.config.Configuration
+import org.osmdroid.events.MapEventsReceiver
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.MapEventsOverlay
+import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Polyline
 import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var map: MapView
     private lateinit var status: TextView
-    private lateinit var speedInput: EditText
-    private lateinit var latInput: EditText
-    private lateinit var lonInput: EditText
-    private lateinit var targetLatInput: EditText
-    private lateinit var targetLonInput: EditText
-    private lateinit var routeInput: EditText
-    private lateinit var touchMap: TouchMapView
-    private var updatingInputs = false
+    private lateinit var selectedPoint: TextView
+
+    private var selected: GeoPoint? = null
+    private var currentMarker: Marker? = null
+    private var selectedMarker: Marker? = null
+    private var routeLine: Polyline? = null
+    private val routePoints = mutableListOf<GeoPoint>()
+    private val routeMarkers = mutableListOf<Marker>()
+    private var speedKmh = 4.5
 
     private val stateListener: (WalkState) -> Unit = { state ->
         refresh(state)
@@ -43,61 +53,21 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Configuration.getInstance().userAgentValue = packageName
         setContentView(R.layout.activity_main)
 
+        map = findViewById(R.id.map)
         status = findViewById(R.id.status)
-        speedInput = findViewById(R.id.input_speed)
-        latInput = findViewById(R.id.input_lat)
-        lonInput = findViewById(R.id.input_lon)
-        targetLatInput = findViewById(R.id.input_target_lat)
-        targetLonInput = findViewById(R.id.input_target_lon)
-        routeInput = findViewById(R.id.input_route)
-        touchMap = findViewById(R.id.touch_map)
+        selectedPoint = findViewById(R.id.selected_point)
 
-        findViewById<Button>(R.id.btn_perm).setOnClickListener { requestPermissions() }
-        findViewById<Button>(R.id.btn_dev).setOnClickListener {
-            startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
-        }
-        findViewById<Button>(R.id.btn_start).setOnClickListener {
-            MockService.start(this)
-            WalkEngine.start(this)
-            toast("Mock service started")
-        }
-        findViewById<Button>(R.id.btn_stop).setOnClickListener {
-            WalkEngine.shutdown()
-            MockService.stop(this)
-            refresh(WalkEngine.snapshot())
-        }
-        findViewById<Button>(R.id.btn_apply_speed).setOnClickListener {
-            val speed = readDouble(speedInput, "speed") ?: return@setOnClickListener
-            ensureStarted()
-            WalkEngine.setSpeed(speed)
-        }
-        findViewById<Button>(R.id.btn_teleport).setOnClickListener {
-            val lat = readDouble(latInput, "latitude") ?: return@setOnClickListener
-            val lon = readDouble(lonInput, "longitude") ?: return@setOnClickListener
-            ensureStarted()
-            WalkEngine.setPosition(lat, lon)
-        }
-        findViewById<Button>(R.id.btn_walk_target).setOnClickListener {
-            val lat = readDouble(targetLatInput, "target latitude") ?: return@setOnClickListener
-            val lon = readDouble(targetLonInput, "target longitude") ?: return@setOnClickListener
-            applySpeedIfPresent()
-            ensureStarted()
-            WalkEngine.setTarget(lat, lon)
-        }
-        findViewById<Button>(R.id.btn_walk_route).setOnClickListener {
-            val points = parseRoute(routeInput.text.toString()) ?: return@setOnClickListener
-            applySpeedIfPresent()
-            ensureStarted()
-            WalkEngine.setRoute(points)
-        }
-        findViewById<Button>(R.id.btn_stop_motion).setOnClickListener {
-            WalkEngine.stopMotion()
-        }
-        touchMap.onPick = { lat, lon ->
-            showPointActionSheet(lat, lon)
-        }
+        setupMap()
+
+        findViewById<Button>(R.id.btn_settings).setOnClickListener { showSettingsDialog() }
+        findViewById<Button>(R.id.btn_move_selected).setOnClickListener { moveToSelected() }
+        findViewById<Button>(R.id.btn_fly_selected).setOnClickListener { flyToSelected() }
+        findViewById<Button>(R.id.btn_add_waypoint).setOnClickListener { addWaypoint() }
+        findViewById<Button>(R.id.btn_start_route).setOnClickListener { startRoute() }
+        findViewById<Button>(R.id.btn_stop_clear).setOnClickListener { stopAndClear() }
     }
 
     override fun onStart() {
@@ -105,14 +75,173 @@ class MainActivity : AppCompatActivity() {
         WalkEngine.addListener(stateListener)
     }
 
+    override fun onResume() {
+        super.onResume()
+        map.onResume()
+        refresh(WalkEngine.snapshot())
+    }
+
+    override fun onPause() {
+        map.onPause()
+        super.onPause()
+    }
+
     override fun onStop() {
         WalkEngine.removeListener(stateListener)
         super.onStop()
     }
 
-    override fun onResume() {
-        super.onResume()
-        refresh(WalkEngine.snapshot())
+    private fun setupMap() {
+        map.setTileSource(TileSourceFactory.MAPNIK)
+        map.setMultiTouchControls(true)
+        map.minZoomLevel = 3.0
+        map.maxZoomLevel = 20.0
+        map.controller.setZoom(17.0)
+        map.controller.setCenter(GeoPoint(25.0330, 121.5654))
+        map.overlays.add(MapEventsOverlay(object : MapEventsReceiver {
+            override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
+                selectPoint(p)
+                return true
+            }
+
+            override fun longPressHelper(p: GeoPoint): Boolean {
+                selectPoint(p)
+                return true
+            }
+        }))
+    }
+
+    private fun selectPoint(point: GeoPoint) {
+        selected = point
+        selectedPoint.text = "選取 %.6f, %.6f".format(point.latitude, point.longitude)
+        if (selectedMarker == null) {
+            selectedMarker = Marker(map).apply {
+                title = "Selected"
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                map.overlays.add(this)
+            }
+        }
+        selectedMarker?.position = point
+        map.invalidate()
+    }
+
+    private fun moveToSelected() {
+        val point = requireSelected() ?: return
+        applySpeed()
+        ensureStarted()
+        WalkEngine.setTarget(point.latitude, point.longitude)
+    }
+
+    private fun flyToSelected() {
+        val point = requireSelected() ?: return
+        ensureStarted()
+        WalkEngine.setPosition(point.latitude, point.longitude)
+        map.controller.animateTo(point)
+    }
+
+    private fun addWaypoint() {
+        val point = requireSelected() ?: return
+        routePoints += point
+        val marker = Marker(map).apply {
+            position = point
+            title = "Waypoint ${routePoints.size}"
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+        }
+        routeMarkers += marker
+        map.overlays.add(marker)
+        redrawRoute()
+        toast("Waypoint ${routePoints.size} added")
+    }
+
+    private fun startRoute() {
+        if (routePoints.isEmpty()) {
+            toast("Add at least one waypoint")
+            return
+        }
+        applySpeed()
+        ensureStarted()
+        WalkEngine.setRoute(routePoints.map { it.latitude to it.longitude })
+    }
+
+    private fun stopAndClear() {
+        WalkEngine.stopMotion()
+        clearRouteOverlays()
+        selected = null
+        selectedPoint.text = "點擊地圖選擇位置"
+        selectedMarker?.let { map.overlays.remove(it) }
+        selectedMarker = null
+        map.invalidate()
+    }
+
+    private fun showSettingsDialog() {
+        val dialog = Dialog(this)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(28, 22, 28, 28)
+            setBackgroundColor(Color.WHITE)
+        }
+        val title = TextView(this).apply {
+            text = "設定"
+            textSize = 20f
+            setTextColor(Color.rgb(35, 42, 55))
+            setPadding(0, 0, 0, 12)
+        }
+        val speedInput = EditText(this).apply {
+            hint = "Speed km/h"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or
+                android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setText("%.1f".format(speedKmh))
+            setSelectAllOnFocus(true)
+        }
+        box.addView(title)
+        box.addView(settingButton("定位權限") { requestPermissions() })
+        box.addView(settingButton("Mock 位置設定") {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+        })
+        box.addView(settingButton("啟動 Mock 服務") {
+            ensureStarted()
+            toast("Mock service started")
+        })
+        box.addView(settingButton("關閉 Mock 服務") {
+            WalkEngine.shutdown()
+            MockService.stop(this)
+            refresh(WalkEngine.snapshot())
+        })
+        box.addView(speedInput, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        box.addView(settingButton("套用速度") {
+            val speed = speedInput.text.toString().toDoubleOrNull()
+            if (speed == null) {
+                toast("Invalid speed")
+            } else {
+                speedKmh = speed.coerceIn(0.1, 9999.0)
+                WalkEngine.setSpeed(speedKmh)
+                toast("Speed %.1f km/h".format(speedKmh))
+            }
+        })
+        box.addView(settingButton("關閉") { dialog.dismiss() })
+
+        dialog.setContentView(box)
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.TOP or Gravity.END)
+        }
+    }
+
+    private fun settingButton(label: String, action: () -> Unit): Button {
+        return Button(this).apply {
+            text = label
+            isAllCaps = false
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            setOnClickListener { action() }
+        }
     }
 
     private fun requestPermissions() {
@@ -129,173 +258,74 @@ class MainActivity : AppCompatActivity() {
     private fun ensureStarted() {
         MockService.start(this)
         WalkEngine.start(this)
+        WalkEngine.setSpeed(speedKmh)
     }
 
-    private fun applySpeedIfPresent() {
-        speedInput.text.toString().toDoubleOrNull()?.let { WalkEngine.setSpeed(it) }
+    private fun applySpeed() {
+        WalkEngine.setSpeed(speedKmh)
     }
 
     private fun refresh(state: WalkState) {
+        speedKmh = state.speedKmh
         val fine = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
 
-        if (!updatingInputs && !latInput.hasFocus() && !lonInput.hasFocus() && !speedInput.hasFocus()) {
-            updatingInputs = true
-            latInput.setText("%.6f".format(state.lat))
-            lonInput.setText("%.6f".format(state.lon))
-            speedInput.setText("%.1f".format(state.speedKmh))
-            updatingInputs = false
+        val current = GeoPoint(state.lat, state.lon)
+        if (currentMarker == null) {
+            currentMarker = Marker(map).apply {
+                title = "Current"
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                map.overlays.add(this)
+                map.controller.setCenter(current)
+            }
         }
-
-        val target = if (state.targetLat != null && state.targetLon != null) {
-            "%.6f, %.6f".format(state.targetLat, state.targetLon)
-        } else {
-            "-"
-        }
-        val routeProgress = if (state.mode == "walk_route") {
-            "${state.routeIndex + 1}/${state.route.size}"
-        } else {
-            "-"
-        }
+        currentMarker?.position = current
 
         status.text = buildString {
-            append("Fine location permission: ").append(if (fine) "OK" else "MISSING").append('\n')
-            append("Mock engine ready: ").append(if (MockEngine.ready) "YES" else "NO").append('\n')
-            append("Mode: ").append(state.mode).append(if (state.running) " (RUN)" else " (idle)").append('\n')
-            append("Lat: ").append("%.6f".format(state.lat)).append('\n')
-            append("Lon: ").append("%.6f".format(state.lon)).append('\n')
-            append("Speed: ").append("%.1f km/h".format(state.speedKmh)).append('\n')
-            append("Target: ").append(target).append('\n')
-            append("Route: ").append(routeProgress).append('\n')
-            append("Remaining: ").append(formatDistance(state.remainingM)).append('\n')
-            append("ETA: ").append(formatEta(state.etaS))
+            append(if (fine) "Perm OK" else "Perm missing").append('\n')
+            append(if (MockEngine.ready) "Mock ready" else "Mock off").append('\n')
+            append(state.mode).append(if (state.running) " RUN" else " idle").append('\n')
+            append("%.6f, %.6f".format(state.lat, state.lon)).append('\n')
+            append("%.1f km/h".format(state.speedKmh)).append('\n')
+            append("Remain ").append(formatDistance(state.remainingM))
         }
-        touchMap.setState(state)
+        map.invalidate()
     }
 
-    private fun showPointActionSheet(lat: Double, lon: Double) {
-        val dialog = Dialog(this)
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(20, 16, 20, 20)
-            setBackgroundColor(Color.WHITE)
-        }
-        val title = TextView(this).apply {
-            text = "Selected: %.6f, %.6f".format(lat, lon)
-            textSize = 15f
-            setTextColor(Color.rgb(35, 42, 55))
-            setPadding(0, 0, 0, 10)
-        }
-        box.addView(title, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-        box.addView(actionButton("Walk Here") {
-            targetLatInput.setText("%.6f".format(lat))
-            targetLonInput.setText("%.6f".format(lon))
-            applySpeedIfPresent()
-            ensureStarted()
-            WalkEngine.setTarget(lat, lon)
-            dialog.dismiss()
-        })
-        box.addView(actionButton("Teleport Here") {
-            latInput.setText("%.6f".format(lat))
-            lonInput.setText("%.6f".format(lon))
-            ensureStarted()
-            WalkEngine.setPosition(lat, lon)
-            dialog.dismiss()
-        })
-        box.addView(actionButton("Add Waypoint") {
-            appendRoutePoint(lat, lon)
-            toast("Waypoint added")
-            dialog.dismiss()
-        })
-        box.addView(actionButton("Cancel") {
-            dialog.dismiss()
-        })
-
-        dialog.setContentView(box)
-        dialog.window?.apply {
-            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            setGravity(Gravity.BOTTOM)
-        }
-        dialog.show()
-        dialog.window?.apply {
-            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            setGravity(Gravity.BOTTOM)
-        }
-    }
-
-    private fun actionButton(label: String, action: () -> Unit): Button {
-        return Button(this).apply {
-            text = label
-            isAllCaps = false
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            setOnClickListener { action() }
-        }
-    }
-
-    private fun appendRoutePoint(lat: Double, lon: Double) {
-        val existing = routeInput.text.toString().trim()
-        val point = "%.6f,%.6f".format(lat, lon)
-        routeInput.setText(if (existing.isEmpty()) point else "$existing\n$point")
-        routeInput.setSelection(routeInput.text.length)
-    }
-
-    private fun parseRoute(text: String): List<Pair<Double, Double>>? {
-        val points = mutableListOf<Pair<Double, Double>>()
-        text.lineSequence().forEachIndexed { index, raw ->
-            val line = raw.trim()
-            if (line.isEmpty()) return@forEachIndexed
-            val parts = line.split(',', ' ', '\t').filter { it.isNotBlank() }
-            if (parts.size < 2) {
-                toast("Route line ${index + 1} needs lat,lon")
-                return null
+    private fun redrawRoute() {
+        routeLine?.let { map.overlays.remove(it) }
+        routeLine = null
+        if (routePoints.isNotEmpty()) {
+            routeLine = Polyline().apply {
+                outlinePaint.color = Color.rgb(243, 156, 18)
+                outlinePaint.strokeWidth = 6f
+                setPoints(routePoints)
             }
-            val lat = parts[0].toDoubleOrNull()
-            val lon = parts[1].toDoubleOrNull()
-            if (lat == null || lon == null) {
-                toast("Route line ${index + 1} has invalid numbers")
-                return null
-            }
-            points += lat to lon
+            map.overlays.add(routeLine)
         }
-        if (points.isEmpty()) {
-            toast("Add at least one route point")
-            return null
-        }
-        return points
+        map.invalidate()
     }
 
-    private fun readDouble(input: EditText, name: String): Double? {
-        val value = input.text.toString().trim().toDoubleOrNull()
-        if (value == null) toast("Invalid $name")
-        return value
+    private fun clearRouteOverlays() {
+        routeMarkers.forEach { map.overlays.remove(it) }
+        routeMarkers.clear()
+        routePoints.clear()
+        routeLine?.let { map.overlays.remove(it) }
+        routeLine = null
+    }
+
+    private fun requireSelected(): GeoPoint? {
+        val point = selected
+        if (point == null) toast("Tap map to select a point")
+        return point
     }
 
     private fun formatDistance(meters: Double): String {
         if (meters <= 0.0) return "-"
         return if (meters >= 1000.0) "%.2f km".format(meters / 1000.0)
         else "${meters.roundToInt()} m"
-    }
-
-    private fun formatEta(seconds: Double): String {
-        if (seconds <= 0.0) return "-"
-        val s = seconds.roundToInt()
-        val h = s / 3600
-        val m = (s % 3600) / 60
-        val r = s % 60
-        return when {
-            h > 0 -> "${h}h ${m}m ${r}s"
-            m > 0 -> "${m}m ${r}s"
-            else -> "${r}s"
-        }
     }
 
     private fun toast(message: String) {
