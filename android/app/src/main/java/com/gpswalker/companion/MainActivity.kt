@@ -1,6 +1,7 @@
 package com.gpswalker.companion
 
 import android.Manifest
+import android.app.AppOpsManager
 import android.app.Dialog
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -42,6 +43,8 @@ class MainActivity : AppCompatActivity() {
     private val routePoints = mutableListOf<GeoPoint>()
     private val routeMarkers = mutableListOf<Marker>()
     private var speedKmh = 4.5
+    private var setupDialog: Dialog? = null
+    private var setupShownOnce = false
 
     private val stateListener: (WalkState) -> Unit = { state ->
         refresh(state)
@@ -49,7 +52,10 @@ class MainActivity : AppCompatActivity() {
 
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { refresh(WalkEngine.snapshot()) }
+    ) {
+        refresh(WalkEngine.snapshot())
+        if (setupDialog?.isShowing == true) showSetupDialog()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,6 +85,13 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         map.onResume()
         refresh(WalkEngine.snapshot())
+        if (setupDialog?.isShowing == true) {
+            // Re-check status after user returns from system settings.
+            showSetupDialog()
+        } else if (!setupShownOnce && !setupComplete()) {
+            setupShownOnce = true
+            showSetupDialog()
+        }
     }
 
     override fun onPause() {
@@ -127,14 +140,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun moveToSelected() {
         val point = requireSelected() ?: return
+        if (!ensureStarted()) return
         applySpeed()
-        ensureStarted()
         WalkEngine.setTarget(point.latitude, point.longitude)
     }
 
     private fun flyToSelected() {
         val point = requireSelected() ?: return
-        ensureStarted()
+        if (!ensureStarted()) return
         WalkEngine.setPosition(point.latitude, point.longitude)
         map.controller.animateTo(point)
     }
@@ -158,8 +171,8 @@ class MainActivity : AppCompatActivity() {
             toast("Add at least one waypoint")
             return
         }
+        if (!ensureStarted()) return
         applySpeed()
-        ensureStarted()
         WalkEngine.setRoute(routePoints.map { it.latitude to it.longitude })
     }
 
@@ -194,13 +207,16 @@ class MainActivity : AppCompatActivity() {
             setSelectAllOnFocus(true)
         }
         box.addView(title)
+        box.addView(settingButton("設定精靈") {
+            dialog.dismiss()
+            showSetupDialog()
+        })
         box.addView(settingButton("定位權限") { requestPermissions() })
         box.addView(settingButton("Mock 位置設定") {
             startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
         })
         box.addView(settingButton("啟動 Mock 服務") {
-            ensureStarted()
-            toast("Mock service started")
+            if (ensureStarted()) toast("Mock service started")
         })
         box.addView(settingButton("關閉 Mock 服務") {
             WalkEngine.shutdown()
@@ -244,6 +260,122 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // --- setup wizard ----------------------------------------------------
+
+    private fun hasFineLocation(): Boolean = ContextCompat.checkSelfPermission(
+        this, Manifest.permission.ACCESS_FINE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+
+    private fun devOptionsEnabled(): Boolean = Settings.Global.getInt(
+        contentResolver, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0
+    ) == 1
+
+    private fun isMockLocationApp(): Boolean = try {
+        val appOps = getSystemService(AppOpsManager::class.java)
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(
+                "android:mock_location", android.os.Process.myUid(), packageName)
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(
+                "android:mock_location", android.os.Process.myUid(), packageName)
+        }
+        mode == AppOpsManager.MODE_ALLOWED
+    } catch (_: Exception) {
+        false
+    }
+
+    private fun setupComplete(): Boolean = hasFineLocation() && isMockLocationApp()
+
+    private fun showSetupDialog() {
+        setupDialog?.dismiss()
+        val dialog = Dialog(this)
+        setupDialog = dialog
+
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(36, 28, 36, 28)
+            setBackgroundColor(Color.WHITE)
+        }
+        box.addView(TextView(this).apply {
+            text = "設定精靈"
+            textSize = 20f
+            setTextColor(Color.rgb(35, 42, 55))
+            setPadding(0, 0, 0, 12)
+        })
+
+        val permDone = hasFineLocation()
+        val devDone = devOptionsEnabled()
+        val mockDone = isMockLocationApp()
+
+        box.addView(setupStepRow(permDone, "1. 定位權限", "允許") {
+            requestPermissions()
+        })
+        box.addView(setupStepRow(devDone, "2. 開發人員選項", "前往") {
+            toast("設定 → 關於手機 → 連點「版本號碼」7 次")
+            try {
+                startActivity(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))
+            } catch (_: Exception) {
+                startActivity(Intent(Settings.ACTION_SETTINGS))
+            }
+        })
+        box.addView(setupStepRow(mockDone, "3. 模擬位置應用程式", "前往") {
+            toast("找到「選取模擬位置應用程式」→ 選 GPSWalker")
+            try {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+            } catch (_: Exception) {
+                toast("請先完成步驟 2 開啟開發人員選項")
+            }
+        })
+
+        if (permDone && mockDone) {
+            box.addView(settingButton("✔ 完成，啟動 Mock 服務") {
+                if (ensureStarted()) {
+                    toast("Mock service started")
+                    dialog.dismiss()
+                }
+            })
+        } else {
+            box.addView(TextView(this).apply {
+                text = "完成上面步驟後回到 App，狀態會自動更新"
+                textSize = 13f
+                setTextColor(Color.GRAY)
+                setPadding(0, 8, 0, 0)
+            })
+        }
+        box.addView(settingButton("稍後再說") { dialog.dismiss() })
+
+        dialog.setContentView(box)
+        dialog.show()
+        dialog.window?.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun setupStepRow(
+        done: Boolean, label: String, actionLabel: String, action: () -> Unit
+    ): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 6, 0, 6)
+        }
+        row.addView(TextView(this).apply {
+            text = (if (done) "✅ " else "❌ ") + label
+            textSize = 15f
+            setTextColor(Color.rgb(35, 42, 55))
+            layoutParams = LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        if (!done) {
+            row.addView(Button(this).apply {
+                text = actionLabel
+                isAllCaps = false
+                setOnClickListener { action() }
+            })
+        }
+        return row
+    }
+
     private fun requestPermissions() {
         val perms = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -255,10 +387,21 @@ class MainActivity : AppCompatActivity() {
         permLauncher.launch(perms.toTypedArray())
     }
 
-    private fun ensureStarted() {
+    private fun ensureStarted(): Boolean {
+        if (!hasFineLocation()) {
+            toast("請先允許定位權限")
+            showSetupDialog()
+            return false
+        }
+        if (!isMockLocationApp()) {
+            toast("請先設定模擬位置應用程式")
+            showSetupDialog()
+            return false
+        }
         MockService.start(this)
         WalkEngine.start(this)
         WalkEngine.setSpeed(speedKmh)
+        return true
     }
 
     private fun applySpeed() {

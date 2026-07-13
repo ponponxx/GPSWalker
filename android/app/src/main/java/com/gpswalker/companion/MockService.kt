@@ -35,11 +35,31 @@ class MockService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startForeground(NOTI_ID, buildNotification())
+        // Android 14: FGS type "location" requires location permission already granted,
+        // and the system may deny startForeground on sticky restarts from background.
+        // Either case must not crash the whole app.
+        if (!hasLocationPermission()) {
+            Log.w("GPSWalker", "location permission missing; not starting foreground service")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        try {
+            startForeground(NOTI_ID, buildNotification())
+        } catch (e: Exception) {
+            Log.e("GPSWalker", "startForeground rejected", e)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         MockEngine.init(applicationContext)
         startHttp()
         return START_STICKY
     }
+
+    private fun hasLocationPermission(): Boolean =
+        checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED ||
+        checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
 
     override fun onDestroy() {
         teardown()
